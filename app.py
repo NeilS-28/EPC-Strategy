@@ -25,7 +25,17 @@ DATA_FILE = "epc_data.json"
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE) as f:
-            return json.load(f)
+            d = json.load(f)
+        # ── Migration: backfill fields added after initial release ──────────
+        changed = False
+        for ms in d.get("milestones", []):
+            if "start_date" not in ms:
+                # Use created_at if available, otherwise today
+                ms["start_date"] = ms.get("created_at", str(date.today()))
+                changed = True
+        if changed:
+            save_data(d)
+        return d
     return {"milestones": []}
 
 def save_data(data):
