@@ -502,6 +502,157 @@ if page == "📊 Dashboard":
         st.caption(f"Day {elapsed} of {deadline} — started {s['start_date']}")
         st.markdown("")
 
+    # ── Risk Explainer ────────────────────────────────────────────────────
+    st.markdown('<p class="section-header">Risk Explainer</p>', unsafe_allow_html=True)
+    explainer_options = {s["title"]: s for s in scored}
+    selected_explain = st.selectbox(
+        "Select a milestone to explain its risk score:",
+        list(explainer_options.keys()),
+        key="dashboard_explainer_select"
+    )
+    ex = explainer_options[selected_explain]
+    ex_ms = next(ms for ms in milestones if ms["id"] == ex["id"])
+    ex_col = risk_color(ex["score"])
+
+    # Score badge header
+    st.markdown(
+        f'<div style="background:#1a1f2e; border:1px solid #2d3561; border-left:5px solid {ex_col}; '
+        f'border-radius:12px; padding:20px 24px; margin: 12px 0;">'
+        f'<div style="display:flex; align-items:center; gap:14px; margin-bottom:16px;">'
+        f'<span style="font-size:1.3rem; font-weight:800; color:#fff;">{ex["title"]}</span>'
+        f'<span class="score-badge" style="background:{ex_col}22; color:{ex_col}; border:1px solid {ex_col}; font-size:1rem;">'
+        f'{ex["score"]}/100 &nbsp; {risk_label(ex["score"])}</span>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # Build natural language explanation
+    reasons = []
+    positives = []
+
+    # ── Not started ───────────────────────────────────────────────────────
+    if ex.get("not_started"):
+        reasons.append(("📅", "Not yet started", f"This milestone starts on <b>{ex['start_date']}</b>. No spend has occurred yet, so risk is driven purely by deadline proximity."))
+
+    # ── Timeline pressure ─────────────────────────────────────────────────
+    elapsed   = ex["days_elapsed"]
+    remaining = ex["days_remaining"]
+    deadline  = ex["deadline_days"]
+    pct_done  = elapsed / max(deadline, 1)
+
+    if remaining <= 3:
+        reasons.append(("🚨", "Deadline in 3 days or less", f"Only <b>{remaining} day(s)</b> remain. Any slippage now directly delays payment or handover with zero buffer."))
+    elif remaining <= 7:
+        reasons.append(("⚠️", "Deadline very close", f"<b>{remaining} days</b> remaining — cash flow timing sensitivity is at maximum. A single day of disruption is high-impact."))
+    elif remaining <= 14:
+        reasons.append(("⏱️", "Tight deadline window", f"With <b>{remaining} days</b> left and {round(pct_done*100)}% of the timeline elapsed, urgency is elevated."))
+    else:
+        positives.append(("✅", "Comfortable runway", f"<b>{remaining} days</b> remaining gives adequate buffer to absorb minor disruptions."))
+
+    # ── Budget burn ───────────────────────────────────────────────────────
+    be = ex["burn_efficiency"]
+    if not ex.get("not_started"):
+        pct_spent = round(ex["pct_spent"] * 100)
+        pct_time  = round(ex["pct_time"]  * 100)
+
+        if be > 1.40:
+            reasons.append(("💸", "Severely overspending", f"Spending <b>{round((be-1)*100)}% faster</b> than the schedule allows. At current pace, projected total is <b>${ex['projected_total']:,.0f}</b> vs budget of <b>${ex['total_cost']:,.0f}</b>."))
+        elif be > 1.20:
+            reasons.append(("📈", "Spending above plan", f"Burn rate is <b>{round((be-1)*100)}% over</b> plan. {pct_spent}% of budget consumed at {pct_time}% of timeline."))
+        elif be < 0.60 and pct_time > 20:
+            reasons.append(("🐢", "Underspending vs timeline", f"Only <b>{pct_spent}%</b> of budget used at <b>{pct_time}%</b> of timeline. Risk of a cost surge in the final stretch."))
+        else:
+            positives.append(("✅", "Spend on track", f"<b>{pct_spent}%</b> of budget consumed at <b>{pct_time}%</b> of timeline — burn rate is healthy."))
+
+    # ── PoD breakdown ─────────────────────────────────────────────────────
+    pod_pct = round(ex["PoD"] * 100)
+    if pod_pct >= 60:
+        reasons.append(("🔴", "Very high delay probability", f"Probability of Delay is <b>{pod_pct}%</b>, driven by the combination of budget pressure and timeline consumed."))
+    elif pod_pct >= 35:
+        reasons.append(("🟡", "Elevated delay probability", f"Probability of Delay is <b>{pod_pct}%</b>. Monitor closely — the milestone is approaching its risk threshold."))
+    else:
+        positives.append(("✅", "Low delay probability", f"Probability of Delay is only <b>{pod_pct}%</b>."))
+
+    # ── Cash runway ───────────────────────────────────────────────────────
+    cash_days = ex["days_of_cash_left"]
+    if cash_days < 7:
+        reasons.append(("🏦", "Critical cash runway", f"Only <b>{cash_days:.1f} days</b> of cash left at current burn rate. Overdraft facility or accelerated billing may be needed immediately."))
+    elif cash_days < 14:
+        reasons.append(("⚠️", "Short cash runway", f"<b>{cash_days:.1f} days</b> of cash runway. Plan for financing before funds run out."))
+    else:
+        positives.append(("✅", "Adequate cash runway", f"<b>{cash_days:.1f} days</b> of cash runway remaining at current burn rate."))
+
+    # ── Labour concentration ───────────────────────────────────────────────
+    labourers = ex_ms.get("labourers", [])
+    if labourers:
+        total_labour = sum(l["count"] * l["daily_rate"] * l["days"] for l in labourers)
+        labour_pct   = round(total_labour / max(ex["total_cost"], 1) * 100)
+        if labour_pct > 65:
+            reasons.append(("👷", "Labour-heavy budget", f"Labour accounts for <b>{labour_pct}%</b> of the total contract value, making the budget highly sensitive to attendance, productivity, and headcount changes."))
+
+    # ── Projected overrun ──────────────────────────────────────────────────
+    if ex["projected_total"] > ex["total_cost"] * 1.10 and not ex.get("not_started"):
+        overrun_pct = round((ex["projected_total"] / ex["total_cost"] - 1) * 100)
+        reasons.append(("📊", "Budget overrun projected", f"Current trajectory puts final cost at <b>${ex['projected_total']:,.0f}</b> — <b>{overrun_pct}% over</b> the <b>${ex['total_cost']:,.0f}</b> contract value."))
+    elif not ex.get("not_started"):
+        positives.append(("✅", "No overrun projected", f"Projected final cost of <b>${ex['projected_total']:,.0f}</b> is within the <b>${ex['total_cost']:,.0f}</b> contract value."))
+
+    # ── Render reasons ─────────────────────────────────────────────────────
+    if reasons:
+        st.markdown(
+            '<div style="font-size:0.8rem; font-weight:700; color:#a0aec0; '
+            'text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">'
+            '⚠ Risk Drivers</div>',
+            unsafe_allow_html=True
+        )
+        for icon, title, detail in reasons:
+            st.markdown(
+                f'<div style="background:#2b1a1a; border:1px solid #4a2020; border-radius:8px; '
+                f'padding:12px 16px; margin-bottom:8px;">'
+                f'<span style="font-size:1.1rem;">{icon}</span> '
+                f'<span style="color:#ff6b6b; font-weight:700;">{title}</span><br>'
+                f'<span style="color:#cbd5e0; font-size:0.88rem;">{detail}</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+    if positives:
+        st.markdown(
+            '<div style="font-size:0.8rem; font-weight:700; color:#a0aec0; '
+            'text-transform:uppercase; letter-spacing:1px; margin: 12px 0 8px 0;">'
+            '✓ Positive Factors</div>',
+            unsafe_allow_html=True
+        )
+        for icon, title, detail in positives:
+            st.markdown(
+                f'<div style="background:#0d2b1a; border:1px solid #1a4a2a; border-radius:8px; '
+                f'padding:12px 16px; margin-bottom:8px;">'
+                f'<span style="font-size:1.1rem;">{icon}</span> '
+                f'<span style="color:#68d391; font-weight:700;">{title}</span><br>'
+                f'<span style="color:#cbd5e0; font-size:0.88rem;">{detail}</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+    # Summary sentence
+    score = ex["score"]
+    if score >= 70:
+        summary = f"<b>{ex['title']}</b> is <span style='color:#FF4B4B; font-weight:700;'>CRITICAL</span> because multiple high-severity risk drivers are active simultaneously. Immediate intervention is required."
+    elif score >= 45:
+        summary = f"<b>{ex['title']}</b> is <span style='color:#FFA500; font-weight:700;'>HIGH RISK</span> — significant pressure exists on budget or timeline that warrants close monitoring and proactive mitigation."
+    elif score >= 25:
+        summary = f"<b>{ex['title']}</b> is <span style='color:#00C0F0; font-weight:700;'>MEDIUM RISK</span> — some risk factors are present but the milestone is broadly manageable. Keep a watchful eye."
+    else:
+        summary = f"<b>{ex['title']}</b> is <span style='color:#00CC66; font-weight:700;'>LOW RISK</span> — no significant risk drivers detected. Maintain current execution pace."
+
+    st.markdown(
+        f'<div style="margin-top:16px; padding:14px 18px; background:#16213e; '
+        f'border-radius:8px; border:1px solid #2d3561; color:#e2e8f0; font-size:0.92rem;">'
+        f'💬 {summary}</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  PAGE: ADD MILESTONE
 # ─────────────────────────────────────────────────────────────────────────────
