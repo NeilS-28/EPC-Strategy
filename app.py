@@ -350,47 +350,75 @@ if page == "📊 Dashboard":
 elif page == "➕ Add Milestone":
     st.markdown("# ➕ Add New Milestone")
 
-    with st.form("milestone_form", clear_on_submit=True):
-        st.markdown('<p class="section-header">Basic Info</p>', unsafe_allow_html=True)
-        col1, col2, col3 = st.columns(3)
-        with col1: title = st.text_input("Milestone Title", placeholder="e.g. Foundation Works")
-        with col2: deadline_days = st.number_input("Deadline (days from today)", min_value=1, value=30)
-        with col3: total_cost = st.number_input("Total Contract Value ($)", min_value=0.0, value=50000.0, step=1000.0)
-        phases = st.number_input("Number of Phases", min_value=1, value=1)
+    # Initialise counters in session state so changing them triggers a re-render
+    for key, default in [("n_labour", 1), ("n_mat", 1), ("n_mach", 1)]:
+        if key not in st.session_state:
+            st.session_state[key] = default
 
-        st.markdown('<p class="section-header">👷 Labourers</p>', unsafe_allow_html=True)
-        n_labour = st.number_input("Number of labourer categories", min_value=0, max_value=10, value=1)
-        labourers = []
-        for i in range(int(n_labour)):
-            lc1, lc2, lc3, lc4 = st.columns(4)
-            with lc1: lname = st.text_input(f"Role {i+1}", value=f"Category {i+1}", key=f"ln{i}")
-            with lc2: lcount = st.number_input(f"Workers {i+1}", min_value=1, value=5, key=f"lc{i}")
-            with lc3: lrate = st.number_input(f"Daily Rate ($) {i+1}", min_value=0.0, value=120.0, key=f"lr{i}")
-            with lc4: ldays = st.number_input(f"Days Hired {i+1}", min_value=1, value=int(deadline_days), key=f"ld{i}")
-            labourers.append({"name": lname, "count": lcount, "daily_rate": lrate, "days": ldays})
+    # ── Basic Info ────────────────────────────────────────────────────────
+    st.markdown('<p class="section-header">Basic Info</p>', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        title = st.text_input("Milestone Title", placeholder="e.g. Foundation Works", key="ms_title")
+    with col2:
+        deadline_days = st.number_input("Deadline (days from today)", min_value=1, value=30, key="ms_deadline")
+    with col3:
+        total_cost = st.number_input("Total Contract Value ($)", min_value=0.0, value=50000.0, step=1000.0, key="ms_cost")
+    phases = st.number_input("Number of Phases", min_value=1, value=1, key="ms_phases")
 
-        st.markdown('<p class="section-header">📦 Materials</p>', unsafe_allow_html=True)
-        n_mat = st.number_input("Number of materials", min_value=0, max_value=15, value=1)
-        materials = []
-        for i in range(int(n_mat)):
-            mc1, mc2, mc3 = st.columns(3)
-            with mc1: mname = st.text_input(f"Material {i+1}", value=f"Material {i+1}", key=f"mn{i}")
-            with mc2: mquant = st.number_input(f"Quantity {i+1}", min_value=0.0, value=100.0, key=f"mq{i}")
-            with mc3: munit = st.number_input(f"Unit Cost ($) {i+1}", min_value=0.0, value=10.0, key=f"mu{i}")
-            materials.append({"name": mname, "quantity": mquant, "unit_cost": munit})
+    # ── Labourers ─────────────────────────────────────────────────────────
+    st.markdown('<p class="section-header">👷 Labourers</p>', unsafe_allow_html=True)
+    cnt_col, _, __ = st.columns([1, 1, 2])
+    with cnt_col:
+        st.number_input(
+            "Number of labourer categories", min_value=0, max_value=10,
+            key="n_labour"
+        )
+    labourers = []
+    for i in range(int(st.session_state.n_labour)):
+        lc1, lc2, lc3, lc4 = st.columns(4)
+        with lc1: lname = st.text_input(f"Role {i+1}", value=f"Category {i+1}", key=f"ln_{i}")
+        with lc2: lcount = st.number_input(f"Workers {i+1}", min_value=1, value=5, key=f"lc_{i}")
+        with lc3: lrate = st.number_input(f"Daily Rate ($) {i+1}", min_value=0.0, value=120.0, key=f"lr_{i}")
+        with lc4: ldays = st.number_input(f"Days Hired {i+1}", min_value=1, value=int(deadline_days), key=f"ld_{i}")
+        labourers.append({"name": lname, "count": int(lcount), "daily_rate": float(lrate), "days": int(ldays)})
 
-        st.markdown('<p class="section-header">⚙️ Machinery</p>', unsafe_allow_html=True)
-        n_mach = st.number_input("Number of machine types", min_value=0, max_value=10, value=1)
-        machines = []
-        for i in range(int(n_mach)):
-            xc1, xc2, xc3, xc4 = st.columns(4)
-            with xc1: xname = st.text_input(f"Machine {i+1}", value=f"Machine {i+1}", key=f"xn{i}")
-            with xc2: xcount = st.number_input(f"Units {i+1}", min_value=1, value=1, key=f"xc{i}")
-            with xc3: xrate = st.number_input(f"Daily Rate ($) {i+1}", min_value=0.0, value=500.0, key=f"xr{i}")
-            with xc4: xdays = st.number_input(f"Days {i+1}", min_value=1, value=int(deadline_days), key=f"xd{i}")
-            machines.append({"name": xname, "count": xcount, "daily_rate": xrate, "days": xdays})
+    # ── Materials ─────────────────────────────────────────────────────────
+    st.markdown('<p class="section-header">📦 Materials</p>', unsafe_allow_html=True)
+    cnt_col2, _, __ = st.columns([1, 1, 2])
+    with cnt_col2:
+        st.number_input(
+            "Number of materials", min_value=0, max_value=15,
+            key="n_mat"
+        )
+    materials = []
+    for i in range(int(st.session_state.n_mat)):
+        mc1, mc2, mc3 = st.columns(3)
+        with mc1: mname = st.text_input(f"Material {i+1}", value=f"Material {i+1}", key=f"mn_{i}")
+        with mc2: mquant = st.number_input(f"Quantity {i+1}", min_value=0.0, value=100.0, key=f"mq_{i}")
+        with mc3: munit = st.number_input(f"Unit Cost ($) {i+1}", min_value=0.0, value=10.0, key=f"mu_{i}")
+        materials.append({"name": mname, "quantity": float(mquant), "unit_cost": float(munit)})
 
-        submitted = st.form_submit_button("✅ Save Milestone", use_container_width=True)
+    # ── Machinery ─────────────────────────────────────────────────────────
+    st.markdown('<p class="section-header">⚙️ Machinery</p>', unsafe_allow_html=True)
+    cnt_col3, _, __ = st.columns([1, 1, 2])
+    with cnt_col3:
+        st.number_input(
+            "Number of machine types", min_value=0, max_value=10,
+            key="n_mach"
+        )
+    machines = []
+    for i in range(int(st.session_state.n_mach)):
+        xc1, xc2, xc3, xc4 = st.columns(4)
+        with xc1: xname = st.text_input(f"Machine {i+1}", value=f"Machine {i+1}", key=f"xn_{i}")
+        with xc2: xcount = st.number_input(f"Units {i+1}", min_value=1, value=1, key=f"xc_{i}")
+        with xc3: xrate = st.number_input(f"Daily Rate ($) {i+1}", min_value=0.0, value=500.0, key=f"xr_{i}")
+        with xc4: xdays = st.number_input(f"Days {i+1}", min_value=1, value=int(deadline_days), key=f"xd_{i}")
+        machines.append({"name": xname, "count": int(xcount), "daily_rate": float(xrate), "days": int(xdays)})
+
+    # ── Save Button ───────────────────────────────────────────────────────
+    st.markdown("")
+    submitted = st.button("✅ Save Milestone", use_container_width=True, type="primary")
 
     if submitted and title:
         ms_id = f"MS{len(get_data()['milestones'])+1:03d}_{int(datetime.now().timestamp())}"
@@ -404,6 +432,11 @@ elif page == "➕ Add Milestone":
         d = get_data()
         d["milestones"].append(milestone)
         persist(d)
+
+        # Reset counters for next milestone
+        st.session_state.n_labour = 1
+        st.session_state.n_mat = 1
+        st.session_state.n_mach = 1
 
         planned_labour = sum(l["count"] * l["daily_rate"] * l["days"] for l in labourers)
         planned_material = sum(m["quantity"] * m["unit_cost"] for m in materials)
