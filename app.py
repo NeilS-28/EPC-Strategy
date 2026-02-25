@@ -33,10 +33,13 @@ def load_data():
                 # Use created_at if available, otherwise today
                 ms["start_date"] = ms.get("created_at", str(date.today()))
                 changed = True
+        if "audit_log" not in d:
+            d["audit_log"] = []
+            changed = True
         if changed:
             save_data(d)
         return d
-    return {"milestones": []}
+    return {"milestones": [], "audit_log": []}
 
 def save_data(data):
     with open(DATA_FILE, "w") as f:
@@ -51,6 +54,21 @@ def get_data():
 def persist(data):
     st.session_state.data = data
     save_data(data)
+
+def add_audit_log(action, milestone_title, milestone_id, details=""):
+    """Append an entry to the audit log and persist immediately."""
+    d = get_data()
+    if "audit_log" not in d:
+        d["audit_log"] = []
+    entry = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "action":    action,          # "CREATED" | "EDITED" | "DELETED" | "DELETED_ALL"
+        "milestone_title": milestone_title,
+        "milestone_id":    milestone_id,
+        "details":   details,
+    }
+    d["audit_log"].append(entry)
+    persist(d)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  PLANNED SPEND ENGINE
@@ -373,7 +391,7 @@ with st.sidebar:
     page = st.radio(
         "Navigation",
         ["📊 Dashboard", "➕ Add Milestone", "🔍 Milestone Detail",
-         "✏️ Edit Milestone", "🗑️ Manage Milestones", "📤 Export Report"],
+         "✏️ Edit Milestone", "🗑️ Manage Milestones", "📤 Export Report", "📋 Audit Log"],
         label_visibility="collapsed"
     )
     st.markdown("---")
@@ -707,6 +725,10 @@ elif page == "➕ Add Milestone":
             d = get_data()
             d["milestones"].append(milestone)
             persist(d)
+            add_audit_log(
+                "CREATED", title, ms_id,
+                f"Budget: ${total_cost:,.0f} | Start: {start_date} | Duration: {int(deadline_days)}d"
+            )
 
             # Clear form session keys
             for k in list(st.session_state.keys()):
@@ -906,9 +928,13 @@ elif page == "🔍 Milestone Detail":
         confirm_name = st.text_input("Type the milestone title to confirm:", key="confirm_delete_detail")
         if st.button("🗑️ Delete This Milestone", type="secondary", key="delete_btn_detail"):
             if confirm_name.strip() == ms["title"]:
+                _del_title = ms["title"]
+                _del_id    = ms["id"]
                 d = get_data()
                 d["milestones"] = [m2 for m2 in d["milestones"] if m2["id"] != ms["id"]]
                 persist(d)
+                add_audit_log("DELETED", _del_title, _del_id,
+                              f"Deleted from Milestone Detail page")
                 st.success("Milestone deleted.")
                 st.rerun()
             else:
@@ -1011,9 +1037,17 @@ elif page == "✏️ Edit Milestone":
                 "machines":      new_machines,
                 "edited_at":     str(date.today()),
             }
+            # Build a diff summary of what changed
+            _diff_parts = []
+            if ms["title"]         != new_title:        _diff_parts.append(f"Title: '{ms['title']}' → '{new_title}'")
+            if ms["start_date"]    != str(new_start):   _diff_parts.append(f"Start: {ms['start_date']} → {new_start}")
+            if ms["deadline_days"] != int(new_deadline):_diff_parts.append(f"Duration: {ms['deadline_days']}d → {int(new_deadline)}d")
+            if ms["total_cost"]    != float(new_cost):  _diff_parts.append(f"Budget: ${ms['total_cost']:,.0f} → ${float(new_cost):,.0f}")
+            _diff = " | ".join(_diff_parts) if _diff_parts else "Resources/phases updated"
             d = get_data()
             d["milestones"] = [updated if m2["id"] == ms["id"] else m2 for m2 in d["milestones"]]
             persist(d)
+            add_audit_log("EDITED", ms["title"], ms["id"], _diff)
 
             # Clear edit form state
             for k in list(st.session_state.keys()):
@@ -1073,10 +1107,14 @@ elif page == "🗑️ Manage Milestones":
                 key=f"del_{safe_key}", type="secondary",
                 disabled=not delete_ok, use_container_width=True
             ):
+                _del_title2 = ms["title"]
+                _del_id2    = ms["id"]
                 d = get_data()
                 d["milestones"] = [m2 for m2 in d["milestones"] if m2["id"] != ms["id"]]
                 persist(d)
-                st.success(f"✅ Deleted: {ms['title']}")
+                add_audit_log("DELETED", _del_title2, _del_id2,
+                              "Deleted from Manage Milestones page")
+                st.success(f"✅ Deleted: {_del_title2}")
                 st.rerun()
         st.markdown("")
 
@@ -1086,9 +1124,12 @@ elif page == "🗑️ Manage Milestones":
         nuke_confirm = st.text_input("Type DELETE ALL to confirm:", key="nuke_confirm")
         if st.button("☢️ Wipe Everything", type="secondary"):
             if nuke_confirm.strip() == "DELETE ALL":
+                _all_titles = [m2["title"] for m2 in get_data()["milestones"]]
                 d = get_data()
                 d["milestones"] = []
                 persist(d)
+                add_audit_log("DELETED_ALL", "ALL MILESTONES", "—",
+                              f"Wiped: {', '.join(_all_titles)}" if _all_titles else "No milestones existed")
                 st.success("All milestones deleted.")
                 st.rerun()
             else:
@@ -1155,3 +1196,112 @@ elif page == "📤 Export Report":
         st.download_button("⬇️ Download Full Spend Schedule CSV", data=csv2,
                            file_name=f"epc_spend_schedule_{date.today()}.csv",
                            mime="text/csv", use_container_width=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PAGE: AUDIT LOG
+# ─────────────────────────────────────────────────────────────────────────────
+elif page == "📋 Audit Log":
+    st.markdown("# 📋 Audit Log")
+    st.markdown("A complete record of all milestone creation, edits, and deletions.")
+    data = get_data()
+    logs = data.get("audit_log", [])
+
+    if not logs:
+        st.info("No activity recorded yet. Create, edit, or delete a milestone to start logging.")
+        st.stop()
+
+    # ── Controls ──────────────────────────────────────────────────────────
+    fc1, fc2, fc3 = st.columns([1, 1, 1])
+    with fc1:
+        action_filter = st.multiselect(
+            "Filter by action",
+            ["CREATED", "EDITED", "DELETED", "DELETED_ALL"],
+            default=["CREATED", "EDITED", "DELETED", "DELETED_ALL"],
+            key="audit_action_filter"
+        )
+    with fc2:
+        search_term = st.text_input("Search milestone name", placeholder="e.g. Foundation", key="audit_search")
+    with fc3:
+        sort_order = st.radio("Sort", ["Newest first", "Oldest first"], horizontal=True, key="audit_sort")
+
+    st.markdown("---")
+
+    # ── Filter & sort ─────────────────────────────────────────────────────
+    filtered = [e for e in logs if e["action"] in action_filter]
+    if search_term:
+        filtered = [e for e in filtered if search_term.lower() in e["milestone_title"].lower()]
+    if sort_order == "Newest first":
+        filtered = list(reversed(filtered))
+
+    if not filtered:
+        st.warning("No log entries match the current filters.")
+        st.stop()
+
+    # ── Summary KPIs ──────────────────────────────────────────────────────
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    kc1.metric("Total Events",  len(logs))
+    kc2.metric("Created",       sum(1 for e in logs if e["action"] == "CREATED"))
+    kc3.metric("Edited",        sum(1 for e in logs if e["action"] == "EDITED"))
+    kc4.metric("Deleted",       sum(1 for e in logs if e["action"] in ("DELETED", "DELETED_ALL")))
+    st.markdown("")
+
+    # ── Log entries ───────────────────────────────────────────────────────
+    ACTION_STYLES = {
+        "CREATED":     ("#00CC66", "#0d2b1a", "#1a4a2a", "➕"),
+        "EDITED":      ("#63b3ed", "#0d1f2b", "#1a3a4a", "✏️"),
+        "DELETED":     ("#FF4B4B", "#2b0d0d", "#4a1a1a", "🗑️"),
+        "DELETED_ALL": ("#FF4B4B", "#2b0d0d", "#4a1a1a", "☢️"),
+    }
+
+    for entry in filtered:
+        action  = entry["action"]
+        color, bg, border_col, icon = ACTION_STYLES.get(action, ("#a0aec0", "#1a1f2e", "#2d3561", "📌"))
+        ts      = entry["timestamp"]
+        title   = entry["milestone_title"]
+        ms_id   = entry["milestone_id"]
+        details = entry.get("details", "")
+
+        st.markdown(
+            f'<div style="background:{bg}; border:1px solid {border_col}; '
+            f'border-left:4px solid {color}; border-radius:10px; '
+            f'padding:14px 18px; margin-bottom:10px;">'
+            f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+            f'<span style="font-size:1rem; font-weight:700; color:#fff;">'
+            f'{icon} &nbsp; {title}</span>'
+            f'<span style="background:{color}22; color:{color}; border:1px solid {color}; '
+            f'border-radius:12px; padding:2px 12px; font-size:0.78rem; font-weight:700;">'
+            f'{action}</span>'
+            f'</div>'
+            f'<div style="margin-top:8px; font-size:0.82rem; color:#a0aec0;">'
+            f'🕐 {ts} &nbsp;&nbsp; 🔑 <code style="color:#718096;">{ms_id}</code>'
+            f'</div>'
+            f'{"<div style=\"margin-top:6px; font-size:0.85rem; color:#cbd5e0;\">" + details + "</div>" if details else ""}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+
+    # ── Export audit log ──────────────────────────────────────────────────
+    ec1, ec2 = st.columns([2, 1])
+    with ec1:
+        audit_df = pd.DataFrame(filtered)
+        csv_audit = audit_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download Audit Log CSV",
+            data=csv_audit,
+            file_name=f"epc_audit_log_{date.today()}.csv",
+            mime="text/csv", use_container_width=True
+        )
+    with ec2:
+        if st.button("🗑️ Clear Entire Audit Log", type="secondary", use_container_width=True):
+            if st.session_state.get("_confirm_clear_log"):
+                d = get_data()
+                d["audit_log"] = []
+                persist(d)
+                st.session_state.pop("_confirm_clear_log", None)
+                st.success("Audit log cleared.")
+                st.rerun()
+            else:
+                st.session_state["_confirm_clear_log"] = True
+                st.warning("Click again to confirm clearing the audit log.")
