@@ -211,7 +211,7 @@ with st.sidebar:
     st.markdown("---")
     page = st.radio(
         "Navigation",
-        ["📊 Dashboard", "➕ Add Milestone", "📝 Log Daily Spend", "🔍 Milestone Detail", "📤 Export Report"],
+        ["📊 Dashboard", "➕ Add Milestone", "📝 Log Daily Spend", "🔍 Milestone Detail", "🗑️ Manage Milestones", "📤 Export Report"],
         label_visibility="collapsed"
     )
     st.markdown("---")
@@ -350,10 +350,13 @@ if page == "📊 Dashboard":
 elif page == "➕ Add Milestone":
     st.markdown("# ➕ Add New Milestone")
 
-    # Initialise counters in session state so changing them triggers a re-render
-    for key, default in [("n_labour", 1), ("n_mat", 1), ("n_mach", 1)]:
-        if key not in st.session_state:
-            st.session_state[key] = default
+    # Use internal keys (prefixed with _) that are NEVER used as widget keys.
+    # Widget keys are wgt_n_labour etc. — we only read st.session_state[wgt_key].
+    # On save we reset via the internal key trick: delete the widget key so
+    # Streamlit recreates it at default value on next render.
+    for ikey, default in [("_n_labour", 1), ("_n_mat", 1), ("_n_mach", 1)]:
+        if ikey not in st.session_state:
+            st.session_state[ikey] = default
 
     # ── Basic Info ────────────────────────────────────────────────────────
     st.markdown('<p class="section-header">Basic Info</p>', unsafe_allow_html=True)
@@ -370,12 +373,13 @@ elif page == "➕ Add Milestone":
     st.markdown('<p class="section-header">👷 Labourers</p>', unsafe_allow_html=True)
     cnt_col, _, __ = st.columns([1, 1, 2])
     with cnt_col:
-        st.number_input(
+        n_labour = st.number_input(
             "Number of labourer categories", min_value=0, max_value=10,
-            key="n_labour"
+            value=st.session_state["_n_labour"], key="wgt_n_labour"
         )
+    st.session_state["_n_labour"] = int(n_labour)
     labourers = []
-    for i in range(int(st.session_state.n_labour)):
+    for i in range(int(n_labour)):
         lc1, lc2, lc3, lc4 = st.columns(4)
         with lc1: lname = st.text_input(f"Role {i+1}", value=f"Category {i+1}", key=f"ln_{i}")
         with lc2: lcount = st.number_input(f"Workers {i+1}", min_value=1, value=5, key=f"lc_{i}")
@@ -387,12 +391,13 @@ elif page == "➕ Add Milestone":
     st.markdown('<p class="section-header">📦 Materials</p>', unsafe_allow_html=True)
     cnt_col2, _, __ = st.columns([1, 1, 2])
     with cnt_col2:
-        st.number_input(
+        n_mat = st.number_input(
             "Number of materials", min_value=0, max_value=15,
-            key="n_mat"
+            value=st.session_state["_n_mat"], key="wgt_n_mat"
         )
+    st.session_state["_n_mat"] = int(n_mat)
     materials = []
-    for i in range(int(st.session_state.n_mat)):
+    for i in range(int(n_mat)):
         mc1, mc2, mc3 = st.columns(3)
         with mc1: mname = st.text_input(f"Material {i+1}", value=f"Material {i+1}", key=f"mn_{i}")
         with mc2: mquant = st.number_input(f"Quantity {i+1}", min_value=0.0, value=100.0, key=f"mq_{i}")
@@ -403,12 +408,13 @@ elif page == "➕ Add Milestone":
     st.markdown('<p class="section-header">⚙️ Machinery</p>', unsafe_allow_html=True)
     cnt_col3, _, __ = st.columns([1, 1, 2])
     with cnt_col3:
-        st.number_input(
+        n_mach = st.number_input(
             "Number of machine types", min_value=0, max_value=10,
-            key="n_mach"
+            value=st.session_state["_n_mach"], key="wgt_n_mach"
         )
+    st.session_state["_n_mach"] = int(n_mach)
     machines = []
-    for i in range(int(st.session_state.n_mach)):
+    for i in range(int(n_mach)):
         xc1, xc2, xc3, xc4 = st.columns(4)
         with xc1: xname = st.text_input(f"Machine {i+1}", value=f"Machine {i+1}", key=f"xn_{i}")
         with xc2: xcount = st.number_input(f"Units {i+1}", min_value=1, value=1, key=f"xc_{i}")
@@ -433,10 +439,11 @@ elif page == "➕ Add Milestone":
         d["milestones"].append(milestone)
         persist(d)
 
-        # Reset counters for next milestone
-        st.session_state.n_labour = 1
-        st.session_state.n_mat = 1
-        st.session_state.n_mach = 1
+        # Reset: delete widget keys so they re-initialise at default next render
+        for k in ["wgt_n_labour", "wgt_n_mat", "wgt_n_mach",
+                  "_n_labour", "_n_mat", "_n_mach",
+                  "ms_title", "ms_deadline", "ms_cost", "ms_phases"]:
+            st.session_state.pop(k, None)
 
         planned_labour = sum(l["count"] * l["daily_rate"] * l["days"] for l in labourers)
         planned_material = sum(m["quantity"] * m["unit_cost"] for m in materials)
@@ -680,13 +687,95 @@ elif page == "🔍 Milestone Detail":
     # Delete option
     st.markdown("---")
     with st.expander("⚠️ Danger Zone"):
-        if st.button("🗑️ Delete This Milestone", type="secondary"):
-            d = get_data()
-            d["milestones"] = [m2 for m2 in d["milestones"] if m2["id"] != ms["id"]]
-            d["daily_logs"] = [l for l in d["daily_logs"] if l["milestone_id"] != ms["id"]]
-            persist(d)
-            st.success("Milestone deleted.")
-            st.rerun()
+        st.warning("Deleting this milestone will permanently remove it and all its daily logs.")
+        confirm_name = st.text_input("Type the milestone title to confirm:", key="confirm_delete_detail")
+        if st.button("🗑️ Delete This Milestone", type="secondary", key="delete_btn_detail"):
+            if confirm_name.strip() == ms["title"]:
+                d = get_data()
+                d["milestones"] = [m2 for m2 in d["milestones"] if m2["id"] != ms["id"]]
+                d["daily_logs"] = [l for l in d["daily_logs"] if l["milestone_id"] != ms["id"]]
+                persist(d)
+                st.success("Milestone deleted.")
+                st.rerun()
+            else:
+                st.error("Title does not match.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PAGE: MANAGE MILESTONES
+# ─────────────────────────────────────────────────────────────────────────────
+elif page == "🗑️ Manage Milestones":
+    st.markdown("# 🗑️ Manage Milestones")
+    data = get_data()
+    milestones = data["milestones"]
+
+    if not milestones:
+        st.info("No milestones to manage. Add one via ➕ Add Milestone.")
+        st.stop()
+
+    st.markdown("Remove individual milestones and their daily logs, or wipe everything at once.")
+    st.markdown("---")
+
+    for ms in milestones:
+        m = score_milestone(ms, data["daily_logs"])
+        sc = m["score"]
+        col = risk_color(sc)
+        logs_count = len([l for l in data["daily_logs"] if l["milestone_id"] == ms["id"]])
+        safe_key = ms["id"].replace("-", "_").replace(".", "_")
+
+        label_html = (
+            f"<div style='background:#1a1f2e; border:1px solid #2d3561; "
+            f"border-left:4px solid {col}; border-radius:10px; "
+            f"padding:12px 16px; margin-bottom:4px;'>"
+            f"<span style='font-size:1.05rem; font-weight:700; color:#fff;'>{ms['title']}</span>"
+            f" &nbsp; <span style='font-size:0.8rem; color:#a0aec0;'>"
+            f"Budget: ${ms['total_cost']:,.0f} &nbsp;|&nbsp; "
+            f"Deadline: {ms['deadline_days']}d &nbsp;|&nbsp; "
+            f"Logs: {logs_count} &nbsp;|&nbsp; "
+            f"Risk: <span style='color:{col}; font-weight:700;'>{sc}/100 {risk_label(sc)}</span>"
+            f"</span></div>"
+        )
+        st.markdown(label_html, unsafe_allow_html=True)
+
+        col_a, col_b = st.columns([3, 1])
+        with col_a:
+            confirm_input = st.text_input(
+                "confirm", key=f"confirm_{safe_key}",
+                placeholder=f"Type the milestone title to unlock delete",
+                label_visibility="collapsed"
+            )
+        with col_b:
+            delete_ok = confirm_input.strip() == ms["title"]
+            if st.button(
+                "🗑️ Delete" if delete_ok else "🔒 Locked",
+                key=f"del_{safe_key}",
+                type="secondary",
+                disabled=not delete_ok,
+                use_container_width=True
+            ):
+                d = get_data()
+                d["milestones"] = [m2 for m2 in d["milestones"] if m2["id"] != ms["id"]]
+                d["daily_logs"] = [l for l in d["daily_logs"] if l["milestone_id"] != ms["id"]]
+                persist(d)
+                st.success(f"✅ Deleted: {ms['title']}")
+                st.rerun()
+
+        st.markdown("")
+
+    st.markdown("---")
+    with st.expander("☢️ Delete ALL Milestones"):
+        st.error("This permanently deletes every milestone and all daily logs.")
+        nuke_confirm = st.text_input("Type DELETE ALL to confirm:", key="nuke_confirm")
+        if st.button("☢️ Wipe Everything", type="secondary"):
+            if nuke_confirm.strip() == "DELETE ALL":
+                d = get_data()
+                d["milestones"] = []
+                d["daily_logs"] = []
+                persist(d)
+                st.success("All milestones deleted.")
+                st.rerun()
+            else:
+                st.error("Type exactly: DELETE ALL")
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  PAGE: EXPORT REPORT
